@@ -30,6 +30,7 @@ local NOTICE = ngx.NOTICE
 local empty_t = {}
 local _log_prefix = '[lua-cassandra] '
 local _rec_key = 'host:rec:'
+local _maintenance_key = 'host:maintenance:'
 local _prepared_key = 'prepared:id:'
 local _protocol_version_key = 'protocol:version:'
 
@@ -71,11 +72,22 @@ local function add_peer(self, host, data_center)
 end
 
 local function get_peer(self, host, status)
+  local timeout = 1000
+
+  update_time()
+  local tstart = get_now()
   local marshalled, err = self.shm:get(_rec_key .. host)
   if err then
     return nil, 'could not get host details in shm: '..err
   elseif marshalled == nil then
-    return nil, 'no host details for '..host
+    repeat
+      update_time()
+      marshalled, err = self.shm:get(_rec_key .. host)
+      tdiff = get_now() - tstart
+    until(marshalled or tdiff >= timeout)
+    if (tdiff >= timeout) then
+      return nil, 'no host details for '..host
+    end
   elseif type(marshalled) ~= 'string' then
     return nil, 'corrupted shm'
   end
@@ -139,7 +151,7 @@ end
 
 local function set_peer_down(self, host, connect_err)
   if self.logging then
-    log(WARN, _log_prefix, 'setting host at ', host, ' DOWN')
+    log(ERR, _log_prefix, 'setting host at ', host, ' DOWN')
   end
 
   local peer = get_peer(self, host, false)
@@ -151,7 +163,7 @@ end
 
 local function set_peer_up(self, host)
   if self.logging then
-    log(NOTICE, _log_prefix, 'setting host at ', host, ' UP')
+    log(ERR, _log_prefix, 'setting host at ', host, ' UP')
   end
   self.reconn_policy:reset(host)
 
@@ -162,7 +174,30 @@ local function set_peer_up(self, host)
                   peer.data_center, nil, peer.release_version)
 end
 
+local  function set_peer_maintenance(self, host, maintenance)
+  local ok, err = self.shm:safe_set(_maintenance_key .. host, maintenance)
+  if not ok then return 'could not set peer maintenance mode in shm: '..err end
+
+  -- show peer status as down in topology if in maintenance
+  if maintenance then
+    set_peer_down(self, host)
+  else
+    set_peer_up(self, host)
+  end
+
+  return nil
+end
+
+local function in_maintenance_mode(self, host)
+  local ok, err = self.shm:get(_maintenance_key .. host)
+  return ok
+end
+
 local function can_try_peer(self, host)
+  if in_maintenance_mode(self, host) then
+      return false
+  end
+
   local up, err = self.shm:get(host)
   if up then return up
   elseif err then return nil, err
@@ -540,7 +575,7 @@ function _Cluster:refresh()
       else
         if host == "0.0.0.0" or host == "::" then
           if self.logging then
-            log(WARN, _log_prefix, 'found host with \'', host, '\' as ',
+            log(ERR, _log_prefix, 'found host with \'', host, '\' as ',
                                    'rpc_address, using \'', row.peer, '\' ',
                                    'to contact it instead. If this is ',
                                    'incorrect you should avoid using \'', host,
@@ -684,7 +719,7 @@ local function get_or_prepare(self, coordinator, query)
         local ok, err = shm:safe_set(key, query_id)
         if not ok then
           if err == 'no memory' then
-            log(WARN, _log_prefix, 'could not set query id in shm: ',
+            log(ERR, _log_prefix, 'could not set query id in shm: ',
                       'running out of memory, please increase the ',
                       self.dict_name, ' dict size')
           else
@@ -710,7 +745,7 @@ function _Cluster:send_retry(request, ...)
   if not coordinator then return nil, err end
 
   if self.logging then
-    log(NOTICE, _log_prefix, 'retrying request on host at ', coordinator.host,
+    log(ERR, _log_prefix, 'retrying request on host at ', coordinator.host,
                              ' reason: ', ...)
   end
 
@@ -723,7 +758,7 @@ local function prepare_and_retry(self, coordinator, request)
   if request.queries then
     -- prepared batch
     if self.logging then
-      log(NOTICE, _log_prefix, 'some requests from this batch were not prepared on host ',
+      log(ERR, _log_prefix, 'some requests from this batch were not prepared on host ',
                   coordinator.host, ', preparing and retrying')
     end
     for i = 1, #request.queries do
@@ -734,7 +769,7 @@ local function prepare_and_retry(self, coordinator, request)
   else
     -- prepared query
     if self.logging then
-      log(NOTICE, _log_prefix, request.query, ' was not prepared on host ',
+      log(ERR, _log_prefix, request.query, ' was not prepared on host ',
                   coordinator.host, ', preparing and retrying')
     end
     local query_id, err = prepare(self, coordinator, request.query)
@@ -750,10 +785,8 @@ local function handle_error(self, err, cql_code, coordinator, request)
     return prepare_and_retry(self, coordinator, request)
   end
 
-  -- failure, need to try another coordinator
-  coordinator:setkeepalive()
-
   if cql_code then
+    coordinator:setkeepalive()
     local retry
     if cql_code == cql_errors.OVERLOADED or
        cql_code == cql_errors.IS_BOOTSTRAPPING or
@@ -771,11 +804,13 @@ local function handle_error(self, err, cql_code, coordinator, request)
       return self:send_retry(request, 'CQL code: ', cql_code)
     end
   elseif err == 'timeout' then
+    coordinator:close()
     if self.retry_on_timeout then
       return self:send_retry(request, 'timeout')
     end
   else
     -- host seems down?
+    coordinator:setkeepalive()
     local ok, err2 = set_peer_down(self, coordinator.host, err)
     if not ok then return nil, err2 end
     return self:send_retry(request, 'coordinator seems down (' .. err .. ')')
@@ -791,7 +826,7 @@ send_request = function(self, coordinator, request)
   elseif res.warnings and self.logging then
     -- protocol v4 can return warnings to the client
     for i = 1, #res.warnings do
-      log(WARN, _log_prefix, res.warnings[i])
+      log(ERR, _log_prefix, res.warnings[i])
     end
   end
 
@@ -987,5 +1022,6 @@ _Cluster.next_coordinator = next_coordinator
 _Cluster.first_coordinator = first_coordinator
 _Cluster.wait_schema_consensus = wait_schema_consensus
 _Cluster.check_schema_consensus = check_schema_consensus
+_Cluster.set_peer_maintenance = set_peer_maintenance
 
 return _Cluster
