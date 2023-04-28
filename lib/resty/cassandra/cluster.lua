@@ -190,7 +190,7 @@ end
 
 local function set_peer_down(self, host, connect_err)
   if self.logging then
-    log(WARN, _log_prefix, 'setting host at ', host, ' DOWN')
+    log(ERR, _log_prefix, 'setting host at ', host, ' DOWN')
   end
 
   local peer = get_peer(self, host, false)
@@ -202,7 +202,7 @@ end
 
 local function set_peer_up(self, host)
   if self.logging then
-    log(NOTICE, _log_prefix, 'setting host at ', host, ' UP')
+    log(ERR, _log_prefix, 'setting host at ', host, ' UP')
   end
   self.reconn_policy:reset(host)
 
@@ -490,7 +490,7 @@ local function next_coordinator(self, coordinator_options)
       local peer, err = check_peer_health(self, peer_rec.host, coordinator_options, retry)
       if peer then
         if self.logging then
-          log(DEBUG, _log_prefix, 'load balancing policy chose host at ',  peer.host)
+          log(ERR, _log_prefix, 'load balancing policy chose host at ',  peer.host)
         end
         return peer
       else
@@ -578,7 +578,7 @@ function _Cluster:refresh(timeout)
       timeout = self.lock_opts.timeout
     end
 
-    log(DEBUG, _log_prefix, 'refresh: attempting to acquire lock...',
+    log(ERR, _log_prefix, 'refresh: attempting to acquire lock...',
                ' (ver_refresh=', ver_refresh, ', timeout=', timeout, ')')
 
     local lock = resty_lock:new(self.dict_name, {
@@ -594,7 +594,7 @@ function _Cluster:refresh(timeout)
     if elapsed == 0 then
       ver_refresh = ver_refresh + 1
 
-      log(DEBUG, _log_prefix, 'refresh: lock acquired, fetching topology...',
+      log(ERR, _log_prefix, 'refresh: lock acquired, fetching topology...',
                  ' (ver_refresh=', ver_refresh, ')')
 
       local coordinator, err, local_cp = first_coordinator(self)
@@ -627,7 +627,7 @@ function _Cluster:refresh(timeout)
       local local_addr = local_rows[1].rpc_address
       if local_addr == "0.0.0.0" or local_addr == "::" then
         if self.logging then
-          log(WARN, _log_prefix, 'found contact point with \'', local_addr, '\' ',
+          log(ERR, _log_prefix, 'found contact point with \'', local_addr, '\' ',
                                  'as rpc_address, using \'', local_cp, '\' to ',
                                  'contact it instead. If this is incorrect ',
                                  'you should avoid using \'', local_addr, '\' ',
@@ -643,14 +643,14 @@ function _Cluster:refresh(timeout)
         release_version = local_rows[1].release_version
       }
 
-      log(DEBUG, _log_prefix, 'refresh: cluster topology fetched ',
+      log(ERR, _log_prefix, 'refresh: cluster topology fetched ',
                  '(ver_refresh=', ver_refresh, ', n_peers=', #rows, ')')
 
       for i = 1, #rows do
         if rows[i].rpc_address then
           if rows[i].rpc_address == "0.0.0.0" or rows[i].rpc_address == "::" then
             if self.logging then
-              log(WARN, _log_prefix, 'found host with \'', rows[i].rpc_address, '\',',
+              log(ERR, _log_prefix, 'found host with \'', rows[i].rpc_address, '\',',
                                      ' as rpc_address, using \'', rows[i].peer, '\'',
                                      ' to contact it instead. If this is ',
                                      'incorrect you should avoid using \'',
@@ -677,7 +677,7 @@ function _Cluster:refresh(timeout)
         local old_peers, err = get_peers(self, ver_topo)
         if err then return err_with_unlock(lock, err)
         elseif not old_peers then
-          log(WARN, _log_prefix, 'refresh: missing peers entry when comparing ',
+          log(ERR, _log_prefix, 'refresh: missing peers entry when comparing ',
                     'topologies (ver_refresh=', ver_refresh, ')')
         else
           compare_peers(rows, old_peers, topo_changes.added)
@@ -687,7 +687,7 @@ function _Cluster:refresh(timeout)
 
       local rebuild = #topo_changes.added > 0 or #topo_changes.removed > 0
 
-      log(DEBUG, _log_prefix, 'refresh: changes detected in topology: ',
+      log(ERR, _log_prefix, 'refresh: changes detected in topology: ',
                  rebuild and 'yes' or 'no', ' (ver_refresh=', ver_refresh, ')')
 
       if rebuild then
@@ -720,10 +720,10 @@ function _Cluster:refresh(timeout)
 
     ver_topo = self.shm:get(_topo_version_key .. 'latest')
   elseif self.topo_ver < ver_topo then
-    log(DEBUG, _log_prefix, 'refresh: cluster topology already fetched, ',
+    log(ERR, _log_prefix, 'refresh: cluster topology already fetched, ',
                'rebuilding policies (ver_topo=', ver_topo, ')')
   elseif self.topo_ver > ver_topo then
-    log(WARN, _log_prefix, 'refresh: cluster topology version ahead,',
+    log(ERR, _log_prefix, 'refresh: cluster topology version ahead,',
               ' rebuilding policies (cluster.topo_ver=', self.topo_ver, ')')
   end
 
@@ -741,10 +741,10 @@ function _Cluster:refresh(timeout)
 
     self.topo_ver = ver_topo
 
-    log(DEBUG, _log_prefix, 'refresh: cluster topology refreshed: yes',
+    log(ERR, _log_prefix, 'refresh: cluster topology refreshed: yes',
                ' (ver_refresh=', ver_refresh, ', ver_topo=', ver_topo, ')')
   else
-    log(DEBUG, _log_prefix, 'refresh: cluster topology refreshed: no',
+    log(ERR, _log_prefix, 'refresh: cluster topology refreshed: no',
                ' (ver_refresh=', ver_refresh, ', ver_topo=', ver_topo, ')')
   end
 
@@ -807,7 +807,7 @@ end
 
 local function prepare(self, coordinator, query)
   if self.logging then
-    log(DEBUG, _log_prefix, 'preparing ', query, ' on host ', coordinator.host)
+    log(ERR, _log_prefix, 'preparing ', query, ' on host ', coordinator.host)
   end
   -- we are the ones preparing the query
   local res, err = coordinator:prepare(query)
@@ -843,7 +843,7 @@ local function get_or_prepare(self, coordinator, query)
         local ok, err = shm:safe_set(key, query_id)
         if not ok then
           if err == 'no memory' then
-            log(WARN, _log_prefix, 'could not set query id in shm: ',
+            log(ERR, _log_prefix, 'could not set query id in shm: ',
                       'running out of memory, please increase the ',
                       self.dict_name, ' dict size')
           else
@@ -869,7 +869,7 @@ function _Cluster:send_retry(request, ...)
   if not coordinator then return nil, err end
 
   if self.logging then
-    log(NOTICE, _log_prefix, 'retrying request on host at ', coordinator.host,
+    log(ERR, _log_prefix, 'retrying request on host at ', coordinator.host,
                              ' reason: ', ...)
   end
 
@@ -882,7 +882,7 @@ local function prepare_and_retry(self, coordinator, request)
   if request.queries then
     -- prepared batch
     if self.logging then
-      log(NOTICE, _log_prefix, 'some requests from this batch were not prepared on host ',
+      log(ERR, _log_prefix, 'some requests from this batch were not prepared on host ',
                   coordinator.host, ', preparing and retrying')
     end
     for i = 1, #request.queries do
@@ -893,7 +893,7 @@ local function prepare_and_retry(self, coordinator, request)
   else
     -- prepared query
     if self.logging then
-      log(NOTICE, _log_prefix, request.query, ' was not prepared on host ',
+      log(ERR, _log_prefix, request.query, ' was not prepared on host ',
                   coordinator.host, ', preparing and retrying')
     end
     local query_id, err = prepare(self, coordinator, request.query)
@@ -950,7 +950,7 @@ send_request = function(self, coordinator, request)
   elseif res.warnings and self.logging then
     -- protocol v4 can return warnings to the client
     for i = 1, #res.warnings do
-      log(WARN, _log_prefix, res.warnings[i])
+      log(ERR, _log_prefix, res.warnings[i])
     end
   end
 
