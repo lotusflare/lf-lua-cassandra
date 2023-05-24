@@ -514,7 +514,7 @@ local function next_coordinator(self, coordinator_options)
       local peer, err = check_peer_health(self, peer_rec.host, coordinator_options, retry)
       if peer then
         if self.logging then
-          log(ERR, _log_prefix, 'load balancing policy chose host at ',  peer.host)
+          log(DEBUG, _log_prefix, 'load balancing policy chose host at ',  peer.host)
         end
         return peer
       else
