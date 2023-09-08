@@ -922,7 +922,10 @@ local function handle_error(self, err, cql_code, coordinator, request)
     if self.retry_on_timeout then
       local should_retry = self.retry_policy:on_connect_timeout(request)
       if should_retry then
+        log(ERR, _log_prefix, 'sending retry request, retry count - ', request.retries)
         return self:send_retry(request, 'timeout')
+      else
+        log(ERR, _log_prefix, 'Retries stopped', request.retries)
       end
     end
   else
