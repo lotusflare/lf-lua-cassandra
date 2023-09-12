@@ -954,7 +954,10 @@ local function handle_error(self, err, cql_code, coordinator, request)
   elseif err == 'timeout' then
     coordinator:close()
     if self.retry_on_timeout then
-      return self:send_retry(request, 'timeout')
+      local should_retry = self.retry_policy:on_connect_timeout(request)
+      if should_retry then
+        return self:send_retry(request, 'timeout')
+      end
     end
   else
     -- host seems down?

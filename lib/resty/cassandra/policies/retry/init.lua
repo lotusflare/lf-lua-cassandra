@@ -6,6 +6,7 @@ function _M.new_policy(name)
     on_unavailable = function() error('on_unavailable() not implemented') end,
     on_read_timeout = function() error('on_read_timeout() not implemented') end,
     on_write_timeout = function() error('on_write_timeout() not implemented') end,
+    on_connect_timeout = function() error('on_connect_timeout() not implemented') end,
   }
 
   retry_mt.__index = retry_mt
