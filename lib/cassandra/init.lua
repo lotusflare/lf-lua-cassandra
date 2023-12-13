@@ -410,26 +410,28 @@ local function page_iterator(self, query, args, opts)
   local page = 0
 
   return function(_, p_rows)
-      if p_rows == nil then
-          p_rows = {meta = {has_more_pages = true}}
-      end
+    if p_rows == nil then
+      p_rows = {meta = {has_more_pages = true}}
+    end
 
-      local meta = p_rows.meta
-      if not meta.has_more_pages then
-          return nil
-      end
+    local meta = p_rows.meta
+    if not meta.has_more_pages then return end -- end after error
 
-      local rows, err = self:execute(query, args, opts)
-      if err then
-          return nil, err
-      elseif rows and #rows > 0 then
-          page = page + 1
-          opts.paging_state = meta.paging_state
-          return rows, nil, page
-      else
-          return nil, nil, page
-      end
-  end
+    opts.paging_state = meta.paging_state
+
+    local rows, err = self:execute(query, args, opts)
+    if rows and #rows > 0 then
+      page = page + 1
+    elseif err then -- expose the error with one more iteration
+      rows = {meta = {has_more_pages = false}}
+    else -- end of iteration
+      return nil
+    end
+
+    return rows, err, page
+  end, nil, {meta = {has_more_pages = true}}
+  -- nil: our iteration has no invariant state, our control variable is
+  -- the rows themselves
 end
 
 
