@@ -409,6 +409,10 @@ local function page_iterator(self, query, args, opts)
   opts = opts or {}
   local page = 0
   return function(_, p_rows)
+    if p_rows == nil then
+      p_rows = {meta = {has_more_pages = true}}
+    end
+    
     local meta = p_rows.meta
     if not meta.has_more_pages then return end -- end after error
 
