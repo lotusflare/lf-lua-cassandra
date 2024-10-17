@@ -7,7 +7,7 @@
 local resty_lock = require 'resty.lock'
 local cassandra = require 'cassandra'
 local cql = require 'cassandra.cql'
-
+local cjson = require "cjson"
 local update_time = ngx.update_time
 local cql_errors = cql.errors
 local requests = cql.requests
@@ -264,7 +264,6 @@ end
 
 local function check_peer_health(self, host, coordinator_options, retry)
   coordinator_options = coordinator_options or empty_t
-
   local keyspace
   if not coordinator_options.no_keyspace then
     keyspace = coordinator_options.keyspace or self.keyspace
@@ -274,6 +273,7 @@ local function check_peer_health(self, host, coordinator_options, retry)
   if not peer then return nil, err
   else
     peer:settimeout(self.timeout_connect)
+
     local ok, err_conn, maybe_down = peer:connect()
     if ok then
       -- host is healthy
@@ -836,54 +836,62 @@ local function prepare(self, coordinator, query)
   -- we are the ones preparing the query
   local res, err = coordinator:prepare(query)
   if not res then return nil, 'could not prepare query: '..err end
-  return res.query_id
+  -- Store both query_id and result_metadata_id
+  return {
+    query_id = res.query_id,
+    result_metadata_id = res.meta and res.meta.metadata_id
+  }
 end
 
 local function get_or_prepare(self, coordinator, query)
   -- worker memory check
-  local query_id = self.prepared_ids[query]
-  if not query_id then
+  local prepared_stmt = self.prepared_ids[query]
+  if not prepared_stmt then
     -- worker cache miss
     -- shm cache?
     local shm = self.shm
     local key = _prepared_key .. query
     local err
-    query_id, err = shm:get(key)
-    if err then return nil, 'could not get query id from shm:'..err
-    elseif not query_id then
+    local prepared_json, err = shm:get(key)
+    if err then return nil, 'could not get prepared statement from shm:'..err
+    elseif not prepared_json then
       -- shm cache miss
       -- query not prepared yet, must prepare in mutex
       local lock = resty_lock:new(self.dict_name, self.lock_opts)
       local elapsed, err = lock:lock('prepare:' .. query)
       if not elapsed then return nil, 'failed to acquire lock: '..err end
 
-      -- someone else prepared query?
-      query_id, err = shm:get(key)
-      if err then return nil, 'could not get query id from shm:'..err
-      elseif not query_id then
-        query_id, err = prepare(self, coordinator, query)
-        if not query_id then return nil, err end
+      -- Check again in case another worker prepared it
+      prepared_json, err = shm:get(key)
+      if err then return nil, 'could not get prepared statement from shm:'..err
+      elseif not prepared_json then
+        local prepared_stmt, err = prepare(self, coordinator, query)
+        if not prepared_stmt then return nil, err end
 
-        local ok, err = shm:safe_set(key, query_id)
+        prepared_json = cjson.encode(prepared_stmt)
+        local ok, err = shm:safe_set(key, prepared_json)
         if not ok then
           if err == 'no memory' then
-            log(ERR, _log_prefix, 'could not set query id in shm: ',
+            log(ERR, _log_prefix, 'could not set prepared statement in shm: ',
                       'running out of memory, please increase the ',
                       self.dict_name, ' dict size')
           else
-            return nil, 'could not set query id in shm: '..err end
+            return nil, 'could not set prepared statement in shm: '..err
           end
+        end
       end
 
       local ok, err = lock:unlock()
       if not ok then return nil, 'failed to unlock: '..err end
     end
 
-    -- set worker cache
-    self.prepared_ids[query] = query_id
+    -- Decode the prepared statement
+    prepared_stmt = cjson.decode(prepared_json)
+    -- Cache in worker memory
+    self.prepared_ids[query] = prepared_stmt
   end
 
-  return query_id
+  return prepared_stmt
 end
 
 local send_request
@@ -1061,13 +1069,15 @@ do
     local coordinator, err = next_coordinator(self, coordinator_options)
     if not coordinator then return nil, err end
 
+    log(DEBUG, _log_prefix, 'coordinator: protocol_version (protocol_version=', coordinator.protocol_version, ')')
+
     local request
     local opts = get_request_opts(options)
 
     if opts.prepared then
-      local query_id, err = get_or_prepare(self, coordinator, query)
-      if not query_id then return nil, err end
-      request = prep_req(query_id, args, opts, query)
+      local prepared_stmt, err = get_or_prepare(self, coordinator, query)
+      if not prepared_stmt then return nil, err end
+      request = prep_req(prepared_stmt, args, opts, query)
     else
       request = query_req(query, args, opts)
     end
@@ -1120,9 +1130,9 @@ do
 
     if opts.prepared then
       for i = 1, #queries do
-        local query_id, err = get_or_prepare(self, coordinator, queries[i][1])
-        if not query_id then return nil, err end
-        queries[i][3] = query_id
+        local prepared_stmt, err = get_or_prepare(self, coordinator, queries[i][1])
+        if not prepared_stmt then return nil, err end
+        queries[i][3] = prepared_stmt
       end
     end
 
