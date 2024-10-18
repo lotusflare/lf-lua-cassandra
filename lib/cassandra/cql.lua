@@ -1712,7 +1712,7 @@ Notes:
     frame_reader         = frame_reader,
     consistencies        = consistencies,
     min_protocol_version = 2,
-    def_protocol_version = 4,
+    def_protocol_version = 5,
     OP_CODES = OP_CODES,
   
     -- Expose crc24 and crc32 functions
