@@ -925,6 +925,8 @@ local function prepare_and_retry(self, coordinator, request)
       local prepared_stmt, err = prepare(self, coordinator, query[1])
       if not prepared_stmt then return nil, err end
       query[3] = prepared_stmt.query_id
+      -- If necessary, assign result_metadata_id
+      -- query[4] = prepared_stmt.result_metadata_id
     end
   else
     -- prepared query
