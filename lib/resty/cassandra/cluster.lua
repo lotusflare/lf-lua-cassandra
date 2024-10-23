@@ -921,9 +921,10 @@ local function prepare_and_retry(self, coordinator, request)
                   coordinator.host, ', preparing and retrying')
     end
     for i = 1, #request.queries do
-      local query_id, err = prepare(self, coordinator, request.queries[i][1])
-      if not query_id then return nil, err end
-      request.queries[i][3] = query_id
+      local query = request.queries[i]
+      local prepared_stmt, err = prepare(self, coordinator, query[1])
+      if not prepared_stmt then return nil, err end
+      query[3] = prepared_stmt.query_id
     end
   else
     -- prepared query
@@ -931,10 +932,11 @@ local function prepare_and_retry(self, coordinator, request)
       log(ERR, _log_prefix, request.query, ' was not prepared on host ',
                   coordinator.host, ', preparing and retrying')
     end
-    local query_id, err = prepare(self, coordinator, request.query)
-    if not query_id then return nil, err end
-    request.query_id = query_id
-  end
+    local prepared_stmt, err = prepare(self, coordinator, request.query)
+    if not prepared_stmt then return nil, err end
+      request.query_id = prepared_stmt.query_id
+      request.result_metadata_id = prepared_stmt.result_metadata_id
+    end
 
   return send_request(self, coordinator, request)
 end
