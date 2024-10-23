@@ -188,17 +188,6 @@ function _Host:send(request)
       body_bytes = ''
     end
 
-    local frame_bytes = v_byte .. header_bytes .. body_bytes
-    local function to_hex(str)
-      return (str:gsub('.', function(c)
-        return string.format('%02X ', string.byte(c))
-      end))
-    end
-
-    -- Print out the frame data in hexadecimal format
-    print('Received frame (legacy format):')
-    print(to_hex(frame_bytes))
-
     return cql.frame_reader.read_body(header, body_bytes)
   else
     -- Receive frame header (6 bytes)
@@ -247,18 +236,6 @@ function _Host:send(request)
       op_code = opcode,
       body_length = body_length
     }
-
-    -- Function to convert binary data to hexadecimal representation
-    local function to_hex(str)
-      return (str:gsub('.', function(c)
-        return string.format('%02X ', string.byte(c))
-      end))
-    end
-
-    -- Print out the frame data in hexadecimal format
-    print('Received frame v5:')
-    print(to_hex(header_bytes .. payload_bytes .. trailer_bytes))
-
     -- res, err, cql_err_code
     return cql.frame_reader.read_body(header, body_bytes)
   end

@@ -1083,10 +1083,6 @@ do
 
     if opts.prepared then
       local prepared_stmt, err = get_or_prepare(self, coordinator, query)
-      local inspect = require('inspect')
-
-      print('Prepared Statement:', inspect(prepared_stmt))
-
       if not prepared_stmt then return nil, err end
       request = prep_req(prepared_stmt, args, opts, query)
     else
