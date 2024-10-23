@@ -923,7 +923,9 @@ Notes:
     end
   
     function Buffer:read_options()
-      local cql_t, cql_t_val = self:read_short()
+      local cql_t = self:read_short()
+      local cql_t_val
+    
       if cql_t == cql_types.set or cql_t == cql_types.list then
         cql_t_val = self:read_options()
       elseif cql_t == cql_types.map then
@@ -933,12 +935,13 @@ Notes:
       elseif cql_t == cql_types.tuple then
         cql_t_val = unmarsh_tuple_type(self)
       end
-  
+    
       return {
         __cql_type = cql_t,
         __cql_type_value = cql_t_val
       }
     end
+    
   
     -- CQL Marshalling
     -- @section cql_marshalling
@@ -1048,7 +1051,14 @@ Notes:
       local bytes = self:read_bytes()
       if bytes then
         local buffer = Buffer.new(self.version, bytes)
-        return unmarshaller(buffer, t.__cql_type_value)
+        print('Unmarshalling type:', t.__cql_type, 'Bytes length:', #bytes)
+        local status, result = pcall(unmarshaller, buffer, t.__cql_type_value)
+        if not status then
+          error('Error unmarshalling value: '..tostring(result))
+        end
+        return result
+      else
+        return nil  -- Handle NULL values
       end
     end
   end -- do CQL encoding
@@ -1113,8 +1123,21 @@ Notes:
         header:write_int(body_length)
     
         -- Concatenate header and body to form the complete frame
-        local frame = header:get() .. body_data  
+        local frame = header:get() .. body_data
+        local payload_length = #frame
+        print(payload_length)
+  
         -- Function to convert binary data to hexadecimal representation
+        local function to_hex(str)
+          return (str:gsub('.', function(c)
+              return string.format('%02X ', string.byte(c))
+          end))
+        end
+    
+        -- Print out the frame data in hexadecimal format
+        print('Sending frame (legacy format):')
+        print(to_hex(frame))
+    
         return frame
       else
         -- Use v5 framing format
@@ -1166,6 +1189,16 @@ Notes:
         frame:write_int_le(payload_crc32)  -- Write CRC32 to frame (little-endian)
     
         -- Function to convert binary data to hexadecimal representation
+        local function to_hex(str)
+          return (str:gsub('.', function(c)
+              return string.format('%02X ', string.byte(c))
+          end))
+        end
+    
+        -- Print out the frame data in hexadecimal format
+        print('Sending frame v5:')
+        print(to_hex(frame:get()))
+        -- Return the complete frame
         return frame:get()
       end
     end
@@ -1416,6 +1449,8 @@ Notes:
       GLOBAL_TABLES_SPEC    = 0x01,
       HAS_MORE_PAGES        = 0x02,
       NO_METADATA           = 0x04,
+      METADATA_CHANGED      = 0x08,  -- Added for protocol v5
+  
     }
   
     function frame_reader.version(b)
@@ -1468,7 +1503,7 @@ Notes:
         columns[#columns+1] = {
           name = body:read_string(),
           type = body:read_options(),
-          keysapce = k_name,
+          keyspace = k_name,
           table = t_name
         }
       end
@@ -1522,13 +1557,20 @@ Notes:
   
     local function parse_metadata(body)
       local columns = {}
-      local k_name, t_name, paging_state
-  
+      local k_name, t_name, paging_state, new_metadata_id
+    
       local flags = body:read_int()
       local columns_count = body:read_int()
       local has_more_pages = band(flags, ROWS_RESULT_FLAGS.HAS_MORE_PAGES) ~= 0
-      local has_global_table_spec = band(flags, ROWS_RESULT_FLAGS.GLOBAL_TABLES_SPEC) ~= 0
+      local has_global_table_spec = band(flags, ROWS_RESULT_FLAGS.GLOBAL_TABLES_SPEC) ~= 0  
       --local has_no_metadata = band(flags, ROWS_RESULT_FLAGS.NO_METADATA) ~= 0
+  
+      if body.version >= 5 then
+        local has_metadata_changed = band(flags, ROWS_RESULT_FLAGS.METADATA_CHANGED) ~= 0
+        if has_metadata_changed then
+          new_metadata_id = body:read_short_bytes()
+        end
+      end
   
       if has_more_pages then
         paging_state = body:read_bytes()
@@ -1543,10 +1585,19 @@ Notes:
           k_name = body:read_string()
           t_name = body:read_string()
         end
+  
+        local inspect = require('inspect')
+  
+        local column_name = body:read_string()
+        local column_type = body:read_options()
+      
+        -- Add debug logging
+        print(string.format("Column %d: name=%s, type=%s", _, column_name, inspect(column_type)))
+          
         columns[#columns+1] = {
           name = body:read_string(),
           type = body:read_options(),
-          keysapce = k_name,
+          keyspace = k_name,
           table = t_name
         }
       end
@@ -1554,7 +1605,8 @@ Notes:
         columns        = columns,
         columns_count  = columns_count,
         has_more_pages = has_more_pages,
-        paging_state   = paging_state
+        paging_state   = paging_state,
+        new_metadata_id = new_metadata_id  -- Include the new metadata ID if present
       }
     end
   
@@ -1578,8 +1630,22 @@ Notes:
   
         for _ = 1, rows_count do
           local row = {}
+          print("Reading row", row_num)
+  
           for i = 1, columns_count do
-            row[columns[i].name] = body:read_cql_value(columns[i].type)
+            local column_name = columns[i].name
+            local column_type = columns[i].type
+            local inspect = require('inspect')
+  
+            print(string.format("Reading column %d (%s) of type %s", i, column_name, inspect(column_type)))
+            local value, err = body:read_cql_value(column_type)
+  
+            if not value and err then
+              print("Error reading value:", err)
+              return nil, err
+            end
+        
+            row[column_name] = value
           end
           rows[#rows+1] = row
         end
