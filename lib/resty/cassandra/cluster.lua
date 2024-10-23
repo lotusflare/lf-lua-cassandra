@@ -498,6 +498,9 @@ local function first_coordinator(self)
     if not peer then
       errors[cp[i]] = err
     else
+    for key, value in pairs(peer) do
+        ngx.log(ngx.DEBUG, tostring(key) .. "   yeyug: " .. tostring(value))
+    end
       return peer, nil, cp[i]
     end
   end
@@ -744,7 +747,7 @@ function _Cluster:refresh(timeout)
 
     ver_topo = self.shm:get(_topo_version_key .. 'latest')
   elseif self.topo_ver < ver_topo then
-    log(ERR, _log_prefix, 'refresh: cluster topology already fetched, ',
+    log(ERR, _log_prefix, 'refresh111111: cluster topology already fetched, ',
                'rebuilding policies (ver_topo=', ver_topo, ')')
   elseif self.topo_ver > ver_topo then
     log(ERR, _log_prefix, 'refresh: cluster topology version ahead,',
@@ -1069,13 +1072,17 @@ do
     local coordinator, err = next_coordinator(self, coordinator_options)
     if not coordinator then return nil, err end
 
-    log(DEBUG, _log_prefix, 'coordinator: protocol_version (protocol_version=', coordinator.protocol_version, ')')
+    log(ERR, _log_prefix, 'coordinator: protocol_version (protocol_version=', coordinator.protocol_version, ')')
 
     local request
     local opts = get_request_opts(options)
 
     if opts.prepared then
       local prepared_stmt, err = get_or_prepare(self, coordinator, query)
+      local inspect = require('inspect')
+
+      print('Prepared Statement:', inspect(prepared_stmt))
+
       if not prepared_stmt then return nil, err end
       request = prep_req(prepared_stmt, args, opts, query)
     else

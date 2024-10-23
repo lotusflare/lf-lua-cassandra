@@ -1308,6 +1308,13 @@ Notes:
           r.args = args
           r.opts = opts
           r.query = query -- allow to be re-prepared by cluster
+          print('cql execute_prepared yeyug:')
+          local inspect = require('inspect')
+          print('  query_id:', inspect(r.query_id))
+          print('  result_metadata_id:', inspect(r.result_metadata_id and to_hex(request.result_metadata_id) or 'nil'))
+          print('  args:', inspect(r.args))
+          print('  opts:', inspect(r.opts))
+          print('  query:', inspect(r.query))
           return r
         end,
         build_body = function(self, body)
@@ -1712,7 +1719,7 @@ Notes:
     frame_reader         = frame_reader,
     consistencies        = consistencies,
     min_protocol_version = 2,
-    def_protocol_version = 5,
+    def_protocol_version = 4,
     OP_CODES = OP_CODES,
   
     -- Expose crc24 and crc32 functions
