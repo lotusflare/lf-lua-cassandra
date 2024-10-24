@@ -195,43 +195,84 @@ function _Host:send(request)
       end))
     end
 
+    local function log_large_data(prefix, data)
+      local max_chunk_size = 3000  -- 每个日志块的最大大小
+      local data_length = #data
+      local num_chunks = math.ceil(data_length / max_chunk_size)
+      
+      for i = 1, num_chunks do
+        local start_index = (i - 1) * max_chunk_size + 1
+        local end_index = math.min(i * max_chunk_size, data_length)
+        local chunk = data:sub(start_index, end_index)
+        ngx.log(ngx.ERR, prefix .. " chunk " .. i .. "/" .. num_chunks .. ":\n" .. chunk)
+      end
+    end
     -- Print out the frame data in hexadecimal format
-    print('Received frame  (legacy format):')
-    print(to_hex(frame_bytes))
+    print('Received frame (legacy format):')
+    log_large_data('Received frame1 header_bytes:', to_hex(frame_bytes))
 
     return cql.frame_reader.read_body(header, body_bytes)
   else
-    -- Receive frame header (6 bytes)
-    local header_bytes, err = self.sock:receive(6)
-    if not header_bytes then return nil, err end
+    local envelopes = {}
+    local headers = {}
+    local payloads = {}
+    local trailers = {}
+    while true do
+      -- Receive frame header (6 bytes)
+      local header_bytes, err = self.sock:receive(6)
+      if not header_bytes then return nil, err end
+  
+      local header_buf = cql.buffer.new(self.protocol_version, header_bytes)
+      local header_value = header_buf:read_24bits_le()
+      local payload_length = band(header_value, 0x1FFFF)
+      local is_self_contained = band(rshift(header_value, 17), 0x1)
+  
+      local header_crc24 = header_buf:read_24bits_le()
+      local computed_crc24 = cql.crc24(header_bytes:sub(1, 3))
+      if header_crc24 ~= computed_crc24 then
+        return nil, 'Invalid header CRC24 checksum'
+      end
 
-    local header_buf = cql.buffer.new(self.protocol_version, header_bytes)
-    local header_value = header_buf:read_24bits_le()
-    local payload_length = band(header_value, 0x1FFFF)
-    local is_self_contained = band(rshift(header_value, 17), 0x1)
+      -- Receive payload
+      local payload_bytes, err = self.sock:receive(payload_length)
+      if not payload_bytes then return nil, err end
+  
+      -- Receive frame trailer (4 bytes)
+      local trailer_bytes, err = self.sock:receive(4)
+      if not trailer_bytes then return nil, err end
+      local trailer_buf = cql.buffer.new(self.protocol_version, trailer_bytes)
+      local payload_crc32 = trailer_buf:read_int_le()
+      local computed_crc32 = cql.crc32(payload_bytes)
+      if payload_crc32 ~= computed_crc32 then
+        return nil, 'Invalid payload CRC32 checksum'
+      end
 
-    local header_crc24 = header_buf:read_24bits_le()
-    local computed_crc24 = cql.crc24(header_bytes:sub(1, 3))
-    if header_crc24 ~= computed_crc24 then
-      return nil, 'Invalid header CRC24 checksum'
+      -- Append the envelope payload to the list
+      table.insert(envelopes, payload_bytes)
+      table.insert(headers, header_bytes)
+      table.insert(payloads, payload_bytes)
+      table.insert(trailers, trailer_bytes)
+      print('Received is_self_contained1')
+      print(is_self_contained)
+
+      if is_self_contained == 1 then
+        break
+      end
     end
 
-    -- Receive payload
-    local payload_bytes, err = self.sock:receive(payload_length)
-    if not payload_bytes then return nil, err end
+    -- Concatenate all envelopes to form the full message
+    local full_payload = table.concat(envelopes)
+    print('Received full_payload')
+    print(full_payload)
 
-    -- Receive frame trailer (4 bytes)
-    local trailer_bytes, err = self.sock:receive(4)
-    if not trailer_bytes then return nil, err end
-    local trailer_buf = cql.buffer.new(self.protocol_version, trailer_bytes)
-    local payload_crc32 = trailer_buf:read_int_le()
-    local computed_crc32 = cql.crc32(payload_bytes)
-    if payload_crc32 ~= computed_crc32 then
-      return nil, 'Invalid payload CRC32 checksum'
+    -- Concatenate all frame bytes
+    local all_frame_bytes = ''
+    for i = 1, #headers do
+      all_frame_bytes = all_frame_bytes .. headers[i] .. payloads[i] .. trailers[i]
     end
 
     -- Parse the envelope
-    local envelope = cql.buffer.new(self.protocol_version, payload_bytes)
+    local envelope = cql.buffer.new(self.protocol_version, full_payload)
     local version_byte = envelope:read_byte()
     local version = band(version_byte, 0x7F)  -- Mask out MSB
     local flags = envelope:read_byte()
@@ -239,6 +280,7 @@ function _Host:send(request)
     local opcode = envelope:read_byte()
     local body_length = envelope:read_int()
     local body_bytes = envelope:read(body_length)
+
 
     local header = {
       version = version,
@@ -255,9 +297,22 @@ function _Host:send(request)
       end))
     end
 
+    local function log_large_data(prefix, data)
+      local max_chunk_size = 3000  -- 每个日志块的最大大小
+      local data_length = #data
+      local num_chunks = math.ceil(data_length / max_chunk_size)
+      
+      for i = 1, num_chunks do
+        local start_index = (i - 1) * max_chunk_size + 1
+        local end_index = math.min(i * max_chunk_size, data_length)
+        local chunk = data:sub(start_index, end_index)
+        ngx.log(ngx.ERR, prefix .. " chunk " .. i .. "/" .. num_chunks .. ":\n" .. chunk)
+      end
+    end
+
     -- Print out the frame data in hexadecimal format
     print('Received frame v5:')
-    print(to_hex(header_bytes .. payload_bytes .. trailer_bytes))
+    log_large_data('Received frame v5 data:', to_hex(all_frame_bytes))
 
     -- res, err, cql_err_code
     return cql.frame_reader.read_body(header, body_bytes)
