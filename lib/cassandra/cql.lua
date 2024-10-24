@@ -1477,6 +1477,8 @@ Notes:
     end
   
     local function parse_v4_prepared_metadata(body)
+      print("parse_v4_prepared_metadata body ", inspect(body))
+
       local partition_keys, columns = {}, {}
       local k_name, t_name
   
@@ -1515,6 +1517,8 @@ Notes:
     end
   
     local function parse_v5_prepared_metadata(body)
+      print("parse_v5_prepared_metadata body ", inspect(body))
+
       local metadata_id = body:read_short_bytes()
       local partition_keys, columns = {}, {}
       local k_name, t_name
@@ -1545,7 +1549,8 @@ Notes:
           table    = t_name
         }
       end
-    
+      print("parse_v5_prepared_metadata metadata_id ", inspect(metadata_id))
+
       return {
         metadata_id    = metadata_id,
         columns        = columns,
@@ -1642,6 +1647,8 @@ Notes:
       end,
       [RESULT_KINDS.PREPARED] = function(body)
         local query_id = body:read_short_bytes()
+        print("RESULT_KINDS PREPARED1 ", inspect(query_id))
+
         local metadata
         if body.version >= 5 then
           metadata = parse_v5_prepared_metadata(body)
@@ -1651,6 +1658,9 @@ Notes:
           metadata = parse_metadata(body)
         end
         local result_metadata = parse_metadata(body)
+        print("RESULT_KINDS PREPARED2 ", inspect(metadata))
+        print("RESULT_KINDS PREPARED3 ", inspect(result_metadata))
+
         return {
           type     = 'PREPARED',
           meta     = metadata,
