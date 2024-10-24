@@ -25,6 +25,7 @@ Notes:
   local WARN = ngx.WARN
   local DEBUG = ngx.DEBUG
   local NOTICE = ngx.NOTICE
+  local inspect = require('inspect')
   
   local setmetatable = setmetatable
   local tonumber = tonumber
@@ -923,8 +924,7 @@ Notes:
     end
   
     function Buffer:read_options()
-      local cql_t = self:read_short()
-      local cql_t_val
+      local cql_t, cql_t_val = self:read_short()
     
       if cql_t == cql_types.set or cql_t == cql_types.list then
         cql_t_val = self:read_options()
@@ -1045,20 +1045,18 @@ Notes:
     -- Read a CQL value with a given CQL type
     function Buffer:read_cql_value(t)
       local unmarshaller = cql_unmarshallers[t.__cql_type]
+      print("runmarshalleryeyug1 ", inspect(t.__cql_type))
+  
       if not unmarshaller then
         error('no unmarshaller for CQL type '..t.__cql_type)
       end
       local bytes = self:read_bytes()
       if bytes then
         local buffer = Buffer.new(self.version, bytes)
-        print('Unmarshalling type:', t.__cql_type, 'Bytes length:', #bytes)
-        local status, result = pcall(unmarshaller, buffer, t.__cql_type_value)
-        if not status then
-          error('Error unmarshalling value: '..tostring(result))
-        end
-        return result
-      else
-        return nil  -- Handle NULL values
+        print("runmarshalleryeyug2 ", inspect(buffer))
+        print("runmarshalleryeyug3 ", inspect(t.__cql_type_value))
+  
+        return unmarshaller(buffer, t.__cql_type_value)
       end
     end
   end -- do CQL encoding
@@ -1318,6 +1316,13 @@ Notes:
           r.args = args
           r.opts = opts
           r.query = query -- allow to be re-prepared by cluster
+          print('cql execute_prepared yeyug:')
+          local inspect = require('inspect')
+          print('  query_id:', inspect(r.query_id))
+          print('  result_metadata_id:', inspect(r.result_metadata_id and to_hex(request.result_metadata_id) or 'nil'))
+          print('  args:', inspect(r.args))
+          print('  opts:', inspect(r.opts))
+          print('  query:', inspect(r.query))
           return r
         end,
         build_body = function(self, body)
@@ -1585,18 +1590,16 @@ Notes:
           k_name = body:read_string()
           t_name = body:read_string()
         end
-  
-        local inspect = require('inspect')
-  
         local column_name = body:read_string()
         local column_type = body:read_options()
-      
+        local inspect = require('inspect')
+  
         -- Add debug logging
         print(string.format("Column %d: name=%s, type=%s", _, column_name, inspect(column_type)))
-          
+      
         columns[#columns+1] = {
-          name = body:read_string(),
-          type = body:read_options(),
+          name = column_name,
+          type = column_type,
           keyspace = k_name,
           table = t_name
         }
@@ -1619,7 +1622,6 @@ Notes:
         local columns = metadata.columns
         local columns_count = metadata.columns_count
         local rows_count = body:read_int()
-  
         local rows = {
           type = 'ROWS',
           meta = {
@@ -1630,22 +1632,8 @@ Notes:
   
         for _ = 1, rows_count do
           local row = {}
-          print("Reading row", row_num)
-  
           for i = 1, columns_count do
-            local column_name = columns[i].name
-            local column_type = columns[i].type
-            local inspect = require('inspect')
-  
-            print(string.format("Reading column %d (%s) of type %s", i, column_name, inspect(column_type)))
-            local value, err = body:read_cql_value(column_type)
-  
-            if not value and err then
-              print("Error reading value:", err)
-              return nil, err
-            end
-        
-            row[column_name] = value
+            row[columns[i].name] = body:read_cql_value(columns[i].type)
           end
           rows[#rows+1] = row
         end
