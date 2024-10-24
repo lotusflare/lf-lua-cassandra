@@ -196,7 +196,7 @@ function _Host:send(request)
     end
 
     -- Print out the frame data in hexadecimal format
-    print('Received frame (legacy format):')
+    print('Received frame  (legacy format):')
     print(to_hex(frame_bytes))
 
     return cql.frame_reader.read_body(header, body_bytes)
@@ -238,13 +238,7 @@ function _Host:send(request)
     local stream_id = envelope:read_short()
     local opcode = envelope:read_byte()
     local body_length = envelope:read_int()
-    local body_bytes
-    if body_length > 0 then
-      body_bytes, err = self.sock:receive(body_length)
-      if not body_bytes then return nil, err end
-    else
-      body_bytes = ''
-    end
+    local body_bytes = envelope:read(body_length)
 
     local header = {
       version = version,
@@ -254,7 +248,7 @@ function _Host:send(request)
       body_length = body_length
     }
 
-        -- Function to convert binary data to hexadecimal representation
+    -- Function to convert binary data to hexadecimal representation
     local function to_hex(str)
       return (str:gsub('.', function(c)
         return string.format('%02X ', string.byte(c))

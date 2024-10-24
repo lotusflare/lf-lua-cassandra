@@ -1313,7 +1313,7 @@ Notes:
           print('cql execute_prepared yeyug:')
           local inspect = require('inspect')
           print('  query_id:', inspect(r.query_id))
-          print('  result_metadata_id:', inspect(r.result_metadata_id and to_hex(request.result_metadata_id) or 'nil'))
+          print('  result_metadata_id:', inspect(r.result_metadata_id))
           print('  args:', inspect(r.args))
           print('  opts:', inspect(r.opts))
           print('  query:', inspect(r.query))
