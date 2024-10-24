@@ -1715,6 +1715,9 @@ Notes:
       if op_code == OP_CODES.RESULT then
         local result_kind = body:read_int()
         local parser = results_parsers[result_kind]
+        if not parser then
+          return nil, 'Unsupported result kind: ' .. tostring(result_kind)
+        end
         local res = parser(body)
         res.tracing_id = tracing_id
         res.warnings = warnings
