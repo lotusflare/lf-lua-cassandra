@@ -1045,17 +1045,11 @@ Notes:
     -- Read a CQL value with a given CQL type
     function Buffer:read_cql_value(t)
       local unmarshaller = cql_unmarshallers[t.__cql_type]
-      print("runmarshalleryeyug1 ", inspect(t.__cql_type))
-  
       if not unmarshaller then
-        error('no unmarshaller for CQL type '..t.__cql_type)
       end
       local bytes = self:read_bytes()
       if bytes then
-        local buffer = Buffer.new(self.version, bytes)
-        print("runmarshalleryeyug2 ", inspect(buffer))
-        print("runmarshalleryeyug3 ", inspect(t.__cql_type_value))
-  
+        local buffer = Buffer.new(self.version, bytes)  
         return unmarshaller(buffer, t.__cql_type_value)
       end
     end
@@ -1592,8 +1586,6 @@ Notes:
         end
         local column_name = body:read_string()
         local column_type = body:read_options()
-        local inspect = require('inspect')
-  
         -- Add debug logging
         print(string.format("Column %d: name=%s, type=%s", _, column_name, inspect(column_type)))
       
@@ -1618,6 +1610,8 @@ Notes:
         return {type = 'VOID'}
       end,
       [RESULT_KINDS.ROWS] = function(body)
+        print("RESULT_KINDS row1 ", inspect(body))
+
         local metadata = parse_metadata(body)
         local columns = metadata.columns
         local columns_count = metadata.columns_count
@@ -1629,7 +1623,8 @@ Notes:
             paging_state = metadata.paging_state
           }
         }
-  
+        print("RESULT_KINDS row2 ", inspect(metadata))
+
         for _ = 1, rows_count do
           local row = {}
           for i = 1, columns_count do
