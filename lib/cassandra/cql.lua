@@ -1685,8 +1685,12 @@ Notes:
   
     function frame_reader.read_body(header, bytes)
       local op_code = header.op_code
+      print("frame_reader read_bytes ", inspect(bytes))
+
       local body = Buffer.new(header.version, bytes)
-  
+      print("frame_reader read_header ", inspect(header))
+      print("frame_reader read_body ", inspect(body))
+
       local tracing_id, warnings
       if band(header.flags, FRAME_FLAGS.TRACING) ~= 0 then
         tracing_id = body:read_uuid()
@@ -1738,7 +1742,7 @@ Notes:
     frame_reader         = frame_reader,
     consistencies        = consistencies,
     min_protocol_version = 2,
-    def_protocol_version = 5,
+    def_protocol_version = 4,
     OP_CODES = OP_CODES,
   
     -- Expose crc24 and crc32 functions
