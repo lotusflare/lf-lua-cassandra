@@ -213,20 +213,24 @@ function _Host:send(request)
 
     return cql.frame_reader.read_body(header, body_bytes)
   else
-    local envelopes = {}
-    local headers = {}
-    local payloads = {}
-    local trailers = {}
+    local frame_count = 0
+    local total_body_length = nil
+    local bytes_received = 0
+    local envelope_header = nil
+    local envelope_body_chunks = {}
+
     while true do
+      frame_count = frame_count + 1
       -- Receive frame header (6 bytes)
       local header_bytes, err = self.sock:receive(6)
       if not header_bytes then return nil, err end
-  
+
       local header_buf = cql.buffer.new(self.protocol_version, header_bytes)
       local header_value = header_buf:read_24bits_le()
       local payload_length = band(header_value, 0x1FFFF)
       local is_self_contained = band(rshift(header_value, 17), 0x1)
-  
+      print(string.format("Frame %d: payload_length=%d, is_self_contained=%d", frame_count, payload_length, is_self_contained))
+
       local header_crc24 = header_buf:read_24bits_le()
       local computed_crc24 = cql.crc24(header_bytes:sub(1, 3))
       if header_crc24 ~= computed_crc24 then
@@ -236,7 +240,7 @@ function _Host:send(request)
       -- Receive payload
       local payload_bytes, err = self.sock:receive(payload_length)
       if not payload_bytes then return nil, err end
-  
+
       -- Receive frame trailer (4 bytes)
       local trailer_bytes, err = self.sock:receive(4)
       if not trailer_bytes then return nil, err end
@@ -247,48 +251,48 @@ function _Host:send(request)
         return nil, 'Invalid payload CRC32 checksum'
       end
 
-      -- Append the envelope payload to the list
-      table.insert(envelopes, payload_bytes)
-      table.insert(headers, header_bytes)
-      table.insert(payloads, payload_bytes)
-      table.insert(trailers, trailer_bytes)
-      print('Received is_self_contained1')
-      print(is_self_contained)
+      if frame_count == 1 then
+        -- First frame: parse envelope header and initial body
+        local envelope = cql.buffer.new(self.protocol_version, payload_bytes)
+        local version_byte = envelope:read_byte()
+        local version = band(version_byte, 0x7F)  -- Mask out MSB
+        local flags = envelope:read_byte()
+        local stream_id = envelope:read_short()
+        local opcode = envelope:read_byte()
+        local body_length = envelope:read_int()
+        print(string.format("version_byte %d: version=%d, body_length=%d", version_byte, version, body_length))
+        total_body_length = body_length
 
-      if is_self_contained == 1 then
+        envelope_header = {
+          version = version,
+          flags = flags,
+          stream_id = stream_id,
+          op_code = opcode,
+          body_length = body_length
+        }
+
+        -- The rest of the payload is the beginning of the body
+        local remaining_payload = envelope:read()  -- Read the rest of the payload
+        table.insert(envelope_body_chunks, remaining_payload)
+        bytes_received = #remaining_payload
+      else
+        -- Subsequent frames: payload is continuation of the body
+        table.insert(envelope_body_chunks, payload_bytes)
+        bytes_received = bytes_received + #payload_bytes
+      end
+
+      -- Check if we have received the entire body
+      if bytes_received >= total_body_length then
         break
       end
     end
 
-    -- Concatenate all envelopes to form the full message
-    local full_payload = table.concat(envelopes)
-    print('Received full_payload')
-    print(full_payload)
-
-    -- Concatenate all frame bytes
-    local all_frame_bytes = ''
-    for i = 1, #headers do
-      all_frame_bytes = all_frame_bytes .. headers[i] .. payloads[i] .. trailers[i]
+    -- Concatenate all envelope body chunks to form the full body
+    local full_body = table.concat(envelope_body_chunks)
+    if #full_body > total_body_length then
+      full_body = full_body:sub(1, total_body_length)  -- Trim any extra bytes
     end
 
-    -- Parse the envelope
-    local envelope = cql.buffer.new(self.protocol_version, full_payload)
-    local version_byte = envelope:read_byte()
-    local version = band(version_byte, 0x7F)  -- Mask out MSB
-    local flags = envelope:read_byte()
-    local stream_id = envelope:read_short()
-    local opcode = envelope:read_byte()
-    local body_length = envelope:read_int()
-    local body_bytes = envelope:read(body_length)
-
-
-    local header = {
-      version = version,
-      flags = flags,
-      stream_id = stream_id,
-      op_code = opcode,
-      body_length = body_length
-    }
 
     -- Function to convert binary data to hexadecimal representation
     local function to_hex(str)
@@ -312,10 +316,10 @@ function _Host:send(request)
 
     -- Print out the frame data in hexadecimal format
     print('Received frame v5:')
-    log_large_data('Received frame v5 data:', to_hex(all_frame_bytes))
+    log_large_data('Received frame v5 data:', to_hex(full_body))
 
     -- res, err, cql_err_code
-    return cql.frame_reader.read_body(header, body_bytes)
+    return cql.frame_reader.read_body(envelope_header, full_body)
   end
 end
 
