@@ -1352,6 +1352,7 @@ Notes:
           body:write_short(#queries)
           for i = 1, #queries do
             local q = queries[i] -- {query, args, prepared_stmt}
+            print('  batch q:', inspect(q))
             if opts.prepared then
               local prepared_stmt = q[3]
               body:write_byte(1)
@@ -1379,6 +1380,7 @@ Notes:
               --]]
                 body:write_short(#args)
                 for i = 1, #args do
+                  print('  batch args:', inspect(args[i]))
                   body:write_cql_value(args[i])
                 end
               --end
