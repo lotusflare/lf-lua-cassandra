@@ -972,10 +972,10 @@ Notes:
     }
   
     marsh_cql_value = function(val, version)
-      if val == cql_t_unset then
-        return marsh_unset()
-      elseif val == cql_t_null then
+      if val == nil or val == cql_t_null then
         return marsh_null()
+      elseif val == cql_t_unset then
+        return marsh_unset()
       end
   
       local cql_t
@@ -1006,8 +1006,13 @@ Notes:
       if not marshaller then
         error('no marshaller for CQL type '..cql_t)
       end
+
+      local marshalled_val = marshaller(val, version)
+      if marshalled_val == nil then
+        error('Marshaller returned nil for value of type '..typ)
+      end
   
-      return marsh_bytes(marshaller(val, version))
+      return marsh_bytes(marshalled_val)
     end
   
     function Buffer:write_cql_value(val)
