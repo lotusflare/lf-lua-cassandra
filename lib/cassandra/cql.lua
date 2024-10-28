@@ -1147,59 +1147,55 @@ Notes:
         -- Step 3: Combine Envelope Header and Body to Form Payload
         local envelope_data = envelope:get()
         local payload = envelope_data .. body_data
-        local payload_length = #payload
-    
-        -- Ensure payload length fits in 17 bits
-        if payload_length >= 2^17 then
-          error("Payload length exceeds maximum of 2^17 - 1")
-        end
-    
-        -- Step 4: Build the Frame Header (Little-endian)
-        local frame = Buffer.new(version)
-        -- First 3 bytes: payload length (17 bits) and isSelfContained flag (1 bit)
-        local is_self_contained = 1  -- Assuming the frame is self-contained
-        local header_value = payload_length + lshift(is_self_contained, 17)
-        frame:write_24bits_le(header_value)  -- Write first 3 bytes (little-endian)
-    
-        -- Compute CRC24 of the first 3 bytes of the header
-        local header_bytes = frame:get():sub(1, 3)
-        local header_crc24 = crc24(header_bytes)
-        frame:write_24bits_le(header_crc24)  -- Write CRC24 to header (little-endian)
-    
-        -- Step 5: Append Payload to Frame
-        frame:write(payload)  -- Payload is in big-endian format
-    
-        -- Step 6: Compute and Append CRC32 of the Payload
-        local payload_crc32 = crc32(payload)
-        frame:write_int_le(payload_crc32)  -- Write CRC32 to frame (little-endian)
-    
-        -- Function to convert binary data to hexadecimal representation
-        local function to_hex(str)
-          return (str:gsub('.', function(c)
-            return string.format('%02X ', string.byte(c))
-          end))
-        end
-    
-        local function log_large_data(prefix, data)
-          local max_chunk_size = 3000
-          local data_length = #data
-          local num_chunks = math.ceil(data_length / max_chunk_size)
-          
-          for i = 1, num_chunks do
-            local start_index = (i - 1) * max_chunk_size + 1
-            local end_index = math.min(i * max_chunk_size, data_length)
-            local chunk = data:sub(start_index, end_index)
-            ngx.log(ngx.ERR, prefix .. " chunk " .. i .. "/" .. num_chunks .. ":\n" .. chunk)
+
+        -- Fragmentation Logic
+        local max_payload_length = 2^17 - 1 -- 128 KB
+        local total_payload_length = #payload
+        local fragments = {}
+        local offset = 1
+        
+        while total_payload_length > 0 do
+          local fragment_payload_length = math.min(total_payload_length, max_payload_length)
+          local fragment_payload = payload:sub(offset, offset + fragment_payload_length - 1)
+        
+          -- Update total_payload_length and offset
+          total_payload_length = total_payload_length - fragment_payload_length
+          offset = offset + fragment_payload_length
+        
+          -- Set is_self_contained flag
+          local is_self_contained
+          if total_payload_length == 0 then
+            -- This is the last fragment
+            is_self_contained = 1
+          else
+            -- More fragments will follow
+            is_self_contained = 0
           end
+        
+          -- Build the Frame Header
+          local frame = Buffer.new(version)
+          local header_value = fragment_payload_length + lshift(is_self_contained, 17)
+          frame:write_24bits_le(header_value)
+          local header_bytes = frame:get():sub(1, 3)
+          local header_crc24 = crc24(header_bytes)
+          frame:write_24bits_le(header_crc24)
+        
+          -- Append Payload
+          frame:write(fragment_payload)
+        
+          -- Append Payload CRC32
+          local payload_crc32 = crc32(fragment_payload)
+          frame:write_int_le(payload_crc32)
+        
+          -- Add to fragments
+          fragments[#fragments + 1] = frame:get()
         end
-    
-        -- Print out the frame data in hexadecimal format
-        log_large_data('Sending frame v5:', to_hex(frame:get()))
-        -- Return the complete frame
-        return frame:get()
+        
+        local full_frame = table.concat(fragments)
+        -- Return the concatenated fragments
+        return full_frame
       end
     end
-    
   
     local default_opts = {consistency = consistencies.one}
     local function build_args(body, args, opts)
