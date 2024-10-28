@@ -188,29 +188,6 @@ function _Host:send(request)
       body_bytes = ''
     end
 
-    local frame_bytes = v_byte .. header_bytes .. body_bytes
-    local function to_hex(str)
-      return (str:gsub('.', function(c)
-        return string.format('%02X ', string.byte(c))
-      end))
-    end
-
-    local function log_large_data(prefix, data)
-      local max_chunk_size = 3000  -- 每个日志块的最大大小
-      local data_length = #data
-      local num_chunks = math.ceil(data_length / max_chunk_size)
-      
-      for i = 1, num_chunks do
-        local start_index = (i - 1) * max_chunk_size + 1
-        local end_index = math.min(i * max_chunk_size, data_length)
-        local chunk = data:sub(start_index, end_index)
-        ngx.log(ngx.ERR, prefix .. " chunk " .. i .. "/" .. num_chunks .. ":\n" .. chunk)
-      end
-    end
-    -- Print out the frame data in hexadecimal format
-    print('Received frame (legacy format):')
-    log_large_data('Received frame1 header_bytes:', to_hex(frame_bytes))
-
     return cql.frame_reader.read_body(header, body_bytes)
   else
     local frame_count = 0
@@ -292,32 +269,6 @@ function _Host:send(request)
     if #full_body > total_body_length then
       full_body = full_body:sub(1, total_body_length)  -- Trim any extra bytes
     end
-
-
-    -- Function to convert binary data to hexadecimal representation
-    local function to_hex(str)
-      return (str:gsub('.', function(c)
-        return string.format('%02X ', string.byte(c))
-      end))
-    end
-
-    local function log_large_data(prefix, data)
-      local max_chunk_size = 3000  -- 每个日志块的最大大小
-      local data_length = #data
-      local num_chunks = math.ceil(data_length / max_chunk_size)
-      
-      for i = 1, num_chunks do
-        local start_index = (i - 1) * max_chunk_size + 1
-        local end_index = math.min(i * max_chunk_size, data_length)
-        local chunk = data:sub(start_index, end_index)
-        ngx.log(ngx.ERR, prefix .. " chunk " .. i .. "/" .. num_chunks .. ":\n" .. chunk)
-      end
-    end
-
-    -- Print out the frame data in hexadecimal format
-    print('Received frame v5:')
-    log_large_data('Received frame v5 data:', to_hex(full_body))
-
     -- res, err, cql_err_code
     return cql.frame_reader.read_body(envelope_header, full_body)
   end

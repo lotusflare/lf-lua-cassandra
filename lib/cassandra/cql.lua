@@ -1123,18 +1123,6 @@ Notes:
         local frame = header:get() .. body_data
         local payload_length = #frame
         print(payload_length)
-  
-        -- Function to convert binary data to hexadecimal representation
-        local function to_hex(str)
-          return (str:gsub('.', function(c)
-              return string.format('%02X ', string.byte(c))
-          end))
-        end
-    
-        -- Print out the frame data in hexadecimal format
-        print('Sending frame (legacy format):')
-        print(to_hex(frame))
-    
         return frame
       else
         -- Use v5 framing format
@@ -1188,13 +1176,25 @@ Notes:
         -- Function to convert binary data to hexadecimal representation
         local function to_hex(str)
           return (str:gsub('.', function(c)
-              return string.format('%02X ', string.byte(c))
+            return string.format('%02X ', string.byte(c))
           end))
         end
     
+        local function log_large_data(prefix, data)
+          local max_chunk_size = 3000
+          local data_length = #data
+          local num_chunks = math.ceil(data_length / max_chunk_size)
+          
+          for i = 1, num_chunks do
+            local start_index = (i - 1) * max_chunk_size + 1
+            local end_index = math.min(i * max_chunk_size, data_length)
+            local chunk = data:sub(start_index, end_index)
+            ngx.log(ngx.ERR, prefix .. " chunk " .. i .. "/" .. num_chunks .. ":\n" .. chunk)
+          end
+        end
+    
         -- Print out the frame data in hexadecimal format
-        print('Sending frame v5:')
-        print(to_hex(frame:get()))
+        log_large_data('Sending frame v5:', to_hex(frame:get()))
         -- Return the complete frame
         return frame:get()
       end
@@ -1315,13 +1315,6 @@ Notes:
           r.args = args
           r.opts = opts
           r.query = query -- allow to be re-prepared by cluster
-          print('cql execute_prepared yeyug:')
-          local inspect = require('inspect')
-          print('  query_id:', inspect(r.query_id))
-          print('  result_metadata_id:', inspect(r.result_metadata_id))
-          print('  args:', inspect(r.args))
-          print('  opts:', inspect(r.opts))
-          print('  query:', inspect(r.query))
           return r
         end,
         build_body = function(self, body)
@@ -1352,7 +1345,6 @@ Notes:
           body:write_short(#queries)
           for i = 1, #queries do
             local q = queries[i] -- {query, args, prepared_stmt}
-            print('  batch q:', inspect(q))
             if opts.prepared then
               local prepared_stmt = q[3]
               body:write_byte(1)
@@ -1380,7 +1372,6 @@ Notes:
               --]]
                 body:write_short(#args)
                 for i = 1, #args do
-                  print('  batch args:', inspect(args[i]))
                   body:write_cql_value(args[i])
                 end
               --end
@@ -1484,8 +1475,6 @@ Notes:
     end
   
     local function parse_v4_prepared_metadata(body)
-      print("parse_v4_prepared_metadata body ", inspect(body))
-
       local partition_keys, columns = {}, {}
       local k_name, t_name
   
@@ -1524,8 +1513,6 @@ Notes:
     end
   
     local function parse_v5_prepared_metadata(body)
-      print("parse_v5_prepared_metadata body ", inspect(body))
-
       local metadata_id = body:read_short_bytes()
       local partition_keys, columns = {}, {}
       local k_name, t_name
@@ -1556,8 +1543,6 @@ Notes:
           table    = t_name
         }
       end
-      print("parse_v5_prepared_metadata metadata_id ", inspect(metadata_id))
-
       return {
         metadata_id    = metadata_id,
         columns        = columns,
@@ -1598,9 +1583,7 @@ Notes:
         end
         local column_name = body:read_string()
         local column_type = body:read_options()
-        -- Add debug logging
-        print(string.format("Column %d: name=%s, type=%s", _, column_name, inspect(column_type)))
-      
+
         columns[#columns+1] = {
           name = column_name,
           type = column_type,
@@ -1622,8 +1605,6 @@ Notes:
         return {type = 'VOID'}
       end,
       [RESULT_KINDS.ROWS] = function(body)
-        print("RESULT_KINDS row1 ", inspect(body))
-
         local metadata = parse_metadata(body)
         local columns = metadata.columns
         local columns_count = metadata.columns_count
@@ -1635,8 +1616,6 @@ Notes:
             paging_state = metadata.paging_state
           }
         }
-        print("RESULT_KINDS row2 ", inspect(metadata))
-
         for _ = 1, rows_count do
           local row = {}
           for i = 1, columns_count do
@@ -1654,8 +1633,6 @@ Notes:
       end,
       [RESULT_KINDS.PREPARED] = function(body)
         local query_id = body:read_short_bytes()
-        print("RESULT_KINDS PREPARED1 ", inspect(query_id))
-
         local metadata
         if body.version >= 5 then
           metadata = parse_v5_prepared_metadata(body)
@@ -1665,8 +1642,6 @@ Notes:
           metadata = parse_metadata(body)
         end
         local result_metadata = parse_metadata(body)
-        print("RESULT_KINDS PREPARED2 ", inspect(metadata))
-        print("RESULT_KINDS PREPARED3 ", inspect(result_metadata))
 
         return {
           type     = 'PREPARED',
@@ -1702,12 +1677,7 @@ Notes:
   
     function frame_reader.read_body(header, bytes)
       local op_code = header.op_code
-      print("frame_reader read_bytes ", inspect(bytes))
-
       local body = Buffer.new(header.version, bytes)
-      print("frame_reader read_header ", inspect(header))
-      print("frame_reader read_body ", inspect(body))
-
       local tracing_id, warnings
       if band(header.flags, FRAME_FLAGS.TRACING) ~= 0 then
         tracing_id = body:read_uuid()
@@ -1762,7 +1732,7 @@ Notes:
     frame_reader         = frame_reader,
     consistencies        = consistencies,
     min_protocol_version = 2,
-    def_protocol_version = 4,
+    def_protocol_version = 5,
     OP_CODES = OP_CODES,
   
     -- Expose crc24 and crc32 functions
