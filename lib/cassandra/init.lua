@@ -132,8 +132,6 @@ _Host.__index = _Host
 -- @param[type=table] opts Options for the created client.
 -- @treturn table `client`: A table able to connect to the given host and port.
 function _Host.new(opts)
-  log(DEBUG, '', 'rrrrrrr')
-
   opts = opts or {}
   local sock, err = socket.tcp()
   if err then return nil, err end
@@ -334,8 +332,6 @@ end
 -- @treturn boolean `ok`: `true` if success, `nil` if failure.
 -- @treturn string `err`: String describing the error if failure.
 function _Host:connect()
-  log(DEBUG, '_log_prefix', 'rrrrrrrr')
-
   if not self.sock then
     return nil, 'no socket created'
   end
