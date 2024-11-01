@@ -24,9 +24,6 @@ local now = ngx.now
 local type = type
 local log = ngx.log
 local ERR = ngx.ERR
-local WARN = ngx.WARN
-local DEBUG = ngx.DEBUG
-local NOTICE = ngx.NOTICE
 
 local empty_t = {}
 local _log_prefix = '[lua-cassandra] '
@@ -498,9 +495,6 @@ local function first_coordinator(self)
     if not peer then
       errors[cp[i]] = err
     else
-    for key, value in pairs(peer) do
-        ngx.log(ngx.DEBUG, tostring(key) .. "   yeyug: " .. tostring(value))
-    end
       return peer, nil, cp[i]
     end
   end
@@ -517,7 +511,7 @@ local function next_coordinator(self, coordinator_options)
       local peer, err = check_peer_health(self, peer_rec.host, coordinator_options, retry)
       if peer then
         if self.logging then
-          log(DEBUG, _log_prefix, 'load balancing policy chose host at ',  peer.host)
+          log(ERR, _log_prefix, 'load balancing policy chose host at ',  peer.host)
         end
         return peer
       else
@@ -747,7 +741,7 @@ function _Cluster:refresh(timeout)
 
     ver_topo = self.shm:get(_topo_version_key .. 'latest')
   elseif self.topo_ver < ver_topo then
-    log(ERR, _log_prefix, 'refresh111111: cluster topology already fetched, ',
+    log(ERR, _log_prefix, 'refresh: cluster topology already fetched, ',
                'rebuilding policies (ver_topo=', ver_topo, ')')
   elseif self.topo_ver > ver_topo then
     log(ERR, _log_prefix, 'refresh: cluster topology version ahead,',
@@ -1080,10 +1074,6 @@ do
 
     if opts.prepared then
       local prepared_stmt, err = get_or_prepare(self, coordinator, query)
-      local inspect = require('inspect')
-
-      print('Prepared Statement:', inspect(prepared_stmt))
-
       if not prepared_stmt then return nil, err end
       request = prep_req(prepared_stmt, args, opts, query)
     else

@@ -1,9 +1,10 @@
 --[[
-Implement Cassandra's native protocol v2/v3/v4
+Implement Cassandra's native protocol v2/v3/v4/v5
 See:
   - v2: https://github.com/apache/cassandra/blob/cassandra-2.2.7/doc/native_protocol_v2.spec
   - v3: https://github.com/apache/cassandra/blob/trunk/doc/native_protocol_v3.spec
   - v4: https://github.com/apache/cassandra/blob/trunk/doc/native_protocol_v4.spec
+  - v5: https://github.com/apache/cassandra/blob/trunk/doc/native_protocol_v5.spec
 
 Notes:
   - does not implement REGISTER messages
@@ -17,15 +18,12 @@ Notes:
     (unavailable/write_timeout/read_timeout/already_exists/etc...)
   - v4: does not implement date/time/smallint/tinyint data types
   - v4: does not implement custom payloads for custom QueryHandler
+  - v5: does not implement duration data types
+  - v5: does not implement process new keyspace field in QUERY, PREPARE, and BATCH messages
+  - v5: does not implement process new now_in_seconds field in QUERY, EXECUTE, and BATCH messages
 --]]
 
   local bit = require 'bit'
-  local log = ngx.log
-  local ERR = ngx.ERR
-  local WARN = ngx.WARN
-  local DEBUG = ngx.DEBUG
-  local NOTICE = ngx.NOTICE
-  local inspect = require('inspect')
   
   local setmetatable = setmetatable
   local tonumber = tonumber
@@ -67,7 +65,7 @@ Notes:
     blob      = 0x03,
     boolean   = 0x04,
     counter   = 0x05,
-    decimal   = 0x06,
+    -- decimal   = 0x06,
     double    = 0x07,
     float     = 0x08,
     int       = 0x09,
@@ -328,57 +326,6 @@ Notes:
   
     -- Raw types
     -- @section raw_types
-  
-    local function marsh_decimal(val)
-      -- val should be a string representing the decimal (e.g., '123.45')
-      local s = tostring(val)
-      local sign = ''
-      if s:sub(1,1) == '-' then
-        sign = '-'
-        s = s:sub(2)
-      end
-    
-      local dot_pos = s:find('.', 1, true)
-      local scale = 0
-      if dot_pos then
-        scale = #s - dot_pos
-        s = s:sub(1, dot_pos -1) .. s:sub(dot_pos + 1)
-      end
-    
-      local unscaled_value = tonumber(sign .. s)
-      if not unscaled_value then
-        error("Invalid decimal value: " .. tostring(val))
-      end
-    
-      -- Convert unscaled_value to big-endian bytes
-      local unscaled_bytes = big_endian_representation(unscaled_value, nil) -- variable length
-      local scale_bytes = marsh_int(scale)
-      return scale_bytes .. unscaled_bytes
-    end
-  
-  
-    local function unmarsh_decimal(buffer)
-      local scale = buffer:read_int()
-      local unscaled_bytes = buffer:read()
-      local unscaled_value = string_to_number(unscaled_bytes, true)
-      local s = tostring(unscaled_value)
-      local sign = ''
-      if unscaled_value < 0 then
-        sign = '-'
-        s = s:sub(2)
-      end
-    
-      if scale > 0 then
-        local len = #s
-        if len <= scale then
-          s = '0.' .. string.rep('0', scale - len) .. s
-        else
-          s = s:sub(1, len - scale) .. '.' .. s:sub(len - scale + 1)
-        end
-      end
-      return sign .. s
-    end
-    
     local function marsh_byte(val)
       return char(val)
     end
@@ -1121,8 +1068,6 @@ Notes:
     
         -- Concatenate header and body to form the complete frame
         local frame = header:get() .. body_data
-        local payload_length = #frame
-        print(payload_length)
         return frame
       else
         -- Use v5 framing format
@@ -1728,7 +1673,8 @@ Notes:
     frame_reader         = frame_reader,
     consistencies        = consistencies,
     min_protocol_version = 2,
-    def_protocol_version = 5,
+    -- Controls whether to use v4 or v5 protocol for communication
+    def_protocol_version = 4,
     OP_CODES = OP_CODES,
   
     -- Expose crc24 and crc32 functions

@@ -237,7 +237,7 @@ function _Host:send(request)
         local stream_id = envelope:read_short()
         local opcode = envelope:read_byte()
         local body_length = envelope:read_int()
-        print(string.format("version_byte %d: version=%d, body_length=%d", version_byte, version, body_length))
+        print(string.format("version=%d, body_length=%d", version, body_length))
         total_body_length = body_length
 
         envelope_header = {
