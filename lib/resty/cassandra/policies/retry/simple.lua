@@ -47,4 +47,8 @@ function _M:on_write_timeout(request)
   return request.retries < self.max_retries
 end
 
+function _M:on_connect_timeout(request)
+  return request.retries < self.max_retries
+end
+
 return _M

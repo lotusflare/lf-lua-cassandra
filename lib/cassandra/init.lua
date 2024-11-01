@@ -6,6 +6,14 @@
 
 local socket = require 'cassandra.socket'
 local cql = require 'cassandra.cql'
+local bit = require 'bit'
+local band = bit.band
+local rshift = bit.rshift
+local log = ngx.log
+local ERR = ngx.ERR
+local WARN = ngx.WARN
+local DEBUG = ngx.DEBUG
+local NOTICE = ngx.NOTICE
 
 local setmetatable = setmetatable
 local requests = cql.requests
@@ -155,34 +163,140 @@ function _Host:send(request)
   local sent, err = self.sock:send(frame)
   if not sent then return nil, err end
 
-  -- receive frame version byte
-  local v_byte, err = self.sock:receive(1)
-  if not v_byte then return nil, err end
+  -- Determine if we should use the legacy frame format
+  local is_initial_handshake = (request.op_code == cql.OP_CODES.STARTUP) or (request.op_code == cql.OP_CODES.OPTIONS)
+  local use_legacy_format = is_initial_handshake or (self.protocol_version < 5)
 
-  -- -1 because of the v_byte we just read
-  local version, n_bytes = cql.frame_reader.version(v_byte)
+  if use_legacy_format then
+    -- Use legacy frame format for initial handshake or protocol versions < 5
+    local v_byte, err = self.sock:receive(1)
+    if not v_byte then return nil, err end
 
-  -- receive frame header
-  local header_bytes, err = self.sock:receive(n_bytes)
-  if not header_bytes then return nil, err end
+    local version, n_bytes = cql.frame_reader.version(v_byte)
+    local header_bytes, err = self.sock:receive(n_bytes)
+    if not header_bytes then return nil, err end
 
-  local header = cql.frame_reader.read_header(version, header_bytes)
+    local header = cql.frame_reader.read_header(version, header_bytes)
 
-  -- receive frame body
-  local body_bytes
-  if header.body_length > 0 then
-    body_bytes, err = self.sock:receive(header.body_length)
-    if not body_bytes then return nil, err end
+    local body_bytes
+    if header.body_length > 0 then
+      body_bytes, err = self.sock:receive(header.body_length)
+      if not body_bytes then return nil, err end
+    else
+      body_bytes = ''
+    end
+
+    return cql.frame_reader.read_body(header, body_bytes)
+  else
+    local frame_count = 0
+    local total_body_length = nil
+    local bytes_received = 0
+    local envelope_header = nil
+    local envelope_body_chunks = {}
+
+    while true do
+      frame_count = frame_count + 1
+      -- Receive frame header (6 bytes)
+      local header_bytes, err = self.sock:receive(6)
+      if not header_bytes then return nil, err end
+
+      local header_buf = cql.buffer.new(self.protocol_version, header_bytes)
+      local header_value = header_buf:read_24bits_le()
+      local payload_length = band(header_value, 0x1FFFF)
+      local is_self_contained = band(rshift(header_value, 17), 0x1)
+      print(string.format("Frame %d: payload_length=%d, is_self_contained=%d", frame_count, payload_length, is_self_contained))
+
+      local header_crc24 = header_buf:read_24bits_le()
+      local computed_crc24 = cql.crc24(header_bytes:sub(1, 3))
+      if header_crc24 ~= computed_crc24 then
+        return nil, 'Invalid header CRC24 checksum'
+      end
+
+      -- Receive payload
+      local payload_bytes, err = self.sock:receive(payload_length)
+      if not payload_bytes then return nil, err end
+
+      -- Receive frame trailer (4 bytes)
+      local trailer_bytes, err = self.sock:receive(4)
+      if not trailer_bytes then return nil, err end
+      local trailer_buf = cql.buffer.new(self.protocol_version, trailer_bytes)
+      local payload_crc32 = trailer_buf:read_int_le()
+      local computed_crc32 = cql.crc32(payload_bytes)
+      if payload_crc32 ~= computed_crc32 then
+        return nil, 'Invalid payload CRC32 checksum'
+      end
+
+      if frame_count == 1 then
+        -- First frame: parse envelope header and initial body
+        local envelope = cql.buffer.new(self.protocol_version, payload_bytes)
+        local version_byte = envelope:read_byte()
+        local version = band(version_byte, 0x7F)  -- Mask out MSB
+        local flags = envelope:read_byte()
+        local stream_id = envelope:read_short()
+        local opcode = envelope:read_byte()
+        local body_length = envelope:read_int()
+        print(string.format("version=%d, body_length=%d", version, body_length))
+        total_body_length = body_length
+
+        envelope_header = {
+          version = version,
+          flags = flags,
+          stream_id = stream_id,
+          op_code = opcode,
+          body_length = body_length
+        }
+
+        -- The rest of the payload is the beginning of the body
+        local remaining_payload = envelope:read()  -- Read the rest of the payload
+        table.insert(envelope_body_chunks, remaining_payload)
+        bytes_received = #remaining_payload
+      else
+        -- Subsequent frames: payload is continuation of the body
+        table.insert(envelope_body_chunks, payload_bytes)
+        bytes_received = bytes_received + #payload_bytes
+      end
+
+      -- Check if we have received the entire body
+      if bytes_received >= total_body_length then
+        break
+      end
+    end
+
+    -- Concatenate all envelope body chunks to form the full body
+    local full_body = table.concat(envelope_body_chunks)
+    if #full_body > total_body_length then
+      full_body = full_body:sub(1, total_body_length)  -- Trim any extra bytes
+    end
+    -- res, err, cql_err_code
+    return cql.frame_reader.read_body(envelope_header, full_body)
   end
-
-  -- res, err, cql_err_code
-  return cql.frame_reader.read_body(header, body_bytes)
 end
 
 local function send_startup(self)
   local startup_req = requests.startup.new()
-  return self:send(startup_req)
+  local res, err, cql_err_code
+
+  -- Try with initial protocol version
+  res, err, cql_err_code = self:send(startup_req)
+  if err and cql_err_code == cql.ERROR_PROTOCOL then
+    -- Parse the error message to get supported versions
+    local supported_versions = parse_supported_versions(err)
+    -- Adjust protocol version if necessary
+    if supported_versions[self.protocol_version - 1] then
+      self.protocol_version = self.protocol_version - 1
+      res, err = self:send(startup_req)
+    else
+      return nil, 'No supported protocol version available'
+    end
+  end
+
+  if not res then
+    return nil, err
+  end
+
+  return res
 end
+
 
 local function send_auth(self)
   local token = self.auth:initial_response()
@@ -409,6 +523,10 @@ local function page_iterator(self, query, args, opts)
   opts = opts or {}
   local page = 0
   return function(_, p_rows)
+    if p_rows == nil then
+      p_rows = {meta = {has_more_pages = true}}
+    end
+    
     local meta = p_rows.meta
     if not meta.has_more_pages then return end -- end after error
 
