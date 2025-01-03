@@ -1098,7 +1098,8 @@ Notes:
         local total_payload_length = #payload
         local fragments = {}
         local offset = 1
-        
+        local is_first_fragment = true
+
         while total_payload_length > 0 do
           local fragment_payload_length = math.min(total_payload_length, max_payload_length)
           local fragment_payload = payload:sub(offset, offset + fragment_payload_length - 1)
@@ -1109,12 +1110,15 @@ Notes:
         
           -- Set is_self_contained flag
           local is_self_contained
-          if total_payload_length == 0 then
-            -- This is the last fragment
-            is_self_contained = 1
+          if is_first_fragment then
+              if total_payload_length > 0 then
+                  is_self_contained = 0
+              else
+                  is_self_contained = 1
+              end
+              is_first_fragment = false
           else
-            -- More fragments will follow
-            is_self_contained = 0
+              is_self_contained = 0
           end
         
           -- Build the Frame Header
